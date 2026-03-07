@@ -1,0 +1,53 @@
+[
+    {
+        "name": "Зекора",
+        "rarity": "R"
+    },
+    {
+        "name": "Свити Белль",
+        "rarity": "SR"
+    },
+    {
+        "name": "Сумеречная Искорка",
+        "rarity": "SSR"
+    },
+    {
+        "name": "Спайк",
+        "rarity": "R"
+    },
+    {
+        "name": "Кукла Старлайт",
+        "rarity": "R",
+        "image_id": "AgACAgIAAxkBAAN8aam31kUJsZdZeWBr8Ko5Ok3REN8AAvwYaxsTrEhJt7Nop5dpAAFeAQADAgADeQADOgQ"
+    },
+    {
+        "name": "Мод Пай",
+        "rarity": "SR",
+        "image_id": "AgACAgIAAxkBAAOEaam4vrztbrBlraKWBxoEiGUeNGAAAgQZaxsTrEhJVVLbNRq_hrEBAAMCAAN5AAM6BA"
+    },
+    {
+        "name": "Дискорд в халатике",
+        "rarity": "SSR",
+        "image_id": "AgACAgIAAxkBAAOMaam5AyShjgm86h0Fgq_2h7e-XAYAAg4ZaxsTrEhJXrf03c-u9GEBAAMCAAN4AAM6BA"
+    },
+    {
+        "name": "Лотос и Алоэ",
+        "rarity": "R",
+        "image_id": "AgACAgIAAxkBAAOWaam7YzO_UTVcUGM1_taazXG3GswAAi4ZaxsTrEhJfxzItvsQsakBAAMCAAN4AAM6BA"
+    },
+    {
+        "name": "Принцесса Каденс",
+        "rarity": "R",
+        "image_id": "AgACAgIAAxkBAAOoaam9XCVc5Mk4_ixlF1sIlBtec6MAAkgZaxsTrEhJqumpzYmtqpoBAAMCAAN4AAM6BA"
+    },
+    {
+        "name": "Mi Amore Cadence",
+        "rarity": "UR",
+        "image_id": "AgACAgIAAxkBAAOwaam9pXTPjwpLak22CnzNBoan0SMAAkwZaxsTrEhJAAGAhJJCdNBQAQADAgADeAADOgQ"
+    },
+    {
+        "name": "Октавия",
+        "rarity": "SR",
+        "image_id": "AgACAgIAAxkBAAPOaam-voitsWSC6CUgLyi4WkmE54wAAloZaxsTrEhJdTR9gtcyTAwBAAMCAAN5AAM6BA"
+    }
+]
