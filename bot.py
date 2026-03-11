@@ -3,7 +3,6 @@ from telebot import types
 import json
 import os
 import random
-from datetime import datetime, timedelta
 import sys
 import time
 
@@ -18,7 +17,6 @@ if not TOKEN:
 
 bot = telebot.TeleBot(TOKEN)
 
-# Пытаемся импортировать config для ADMIN_IDS
 try:
     import config
     ADMIN_IDS = config.ADMIN_IDS
@@ -27,6 +25,12 @@ except (ImportError, AttributeError):
 
 CARDS_FILE = 'cards_data.json'
 RARITY_PROBS = {'R': 0.4, 'SR': 0.275, 'SSR': 0.2, 'UR': 0.125}
+RARITY_REWARDS = {
+    'R': {'exp': 10, 'coins': 5},
+    'SR': {'exp': 25, 'coins': 10},
+    'SSR': {'exp': 50, 'coins': 30},
+    'UR': {'exp': 100, 'coins': 50}
+}
 CARD_COOLDOWN = 6 * 60 * 60
 DATA_FILE = 'users_data.json'
 
@@ -79,9 +83,28 @@ def get_user_data(user_id):
     if user_id_str not in users:
         users[user_id_str] = {
             'cards': {},
-            'last_card_time': 0
+            'last_card_time': 0,
+            'experience': 0,
+            'coins': 0,
+            'favorite_card': None
         }
         save_users_data(users)
+    else:
+        updated = False
+        if 'experience' not in users[user_id_str]:
+            users[user_id_str]['experience'] = 0
+            updated = True
+        if 'coins' not in users[user_id_str]:
+            users[user_id_str]['coins'] = 0
+            updated = True
+        if 'favorite_card' not in users[user_id_str]:
+            users[user_id_str]['favorite_card'] = None
+            updated = True
+        if 'last_card_time' not in users[user_id_str]:
+            users[user_id_str]['last_card_time'] = 0
+            updated = True
+        if updated:
+            save_users_data(users)
     return users, users[user_id_str]
 
 def update_user_data(user_id, updated_data):
@@ -108,50 +131,31 @@ def format_time(seconds):
         return f'{minutes} мин'
 
 def get_available_cards(user_cards):
-    """
-    Возвращает список карточек, которых ещё нет у пользователя.
-    """
     available = []
     for card in cards:
         if card['name'] not in user_cards:
             available.append(card)
     return available
-
 def draw_card(user_cards):
-    """
-    Выбирает случайную карточку из тех, которых ещё нет у пользователя,
-    с учётом вероятностей редкости.
-    """
     available_cards = get_available_cards(user_cards)
-    
     if not available_cards:
-        return None  # Все карточки собраны
-    
-    # Группируем доступные карточки по редкости
+        return None
     cards_by_rarity = {}
     for card in available_cards:
         rarity = card['rarity']
         if rarity not in cards_by_rarity:
             cards_by_rarity[rarity] = []
         cards_by_rarity[rarity].append(card)
-        # Выбираем редкость согласно вероятностям
-    # Но учитываем только те редкости, которые ещё доступны
     available_rarities = list(cards_by_rarity.keys())
     if not available_rarities:
         return None
-    
-    # Создаём список вероятностей только для доступных редкостей
     probs = {r: RARITY_PROBS.get(r, 0) for r in available_rarities}
-    # Нормализуем вероятности, чтобы их сумма была 1
     total_prob = sum(probs.values())
     normalized_probs = [probs[r] / total_prob for r in available_rarities]
-    
     chosen_rarity = random.choices(
         population=available_rarities,
         weights=normalized_probs
     )[0]
-    
-    # Выбираем случайную карточку из выбранной редкости
     return random.choice(cards_by_rarity[chosen_rarity])
 
 def is_admin(user_id):
@@ -223,7 +227,6 @@ def process_add_card_image(message):
     else:
         bot.reply_to(message, "❌ Пожалуйста, отправьте изображение или /skip:")
         bot.register_next_step_handler(message, process_add_card_image)
-
 def save_new_card(user_id):
     data = admin_add_state.pop(user_id, None)
     if not data:
@@ -312,6 +315,59 @@ def reset_cooldown(message):
     update_user_data(user_id, user_data)
     bot.reply_to(message, f"✅ Время ожидания сброшено. Теперь вы можете сразу получить карточку командой /getcard.")
 
+# --- Команда для установки любимой карточки ---
+@bot.message_handler(commands=['setfavorite'])
+def set_favorite(message):
+    user_id = message.from_user.id
+    users, user_data = get_user_data(user_id)
+    if not user_data['cards']:
+        bot.reply_to(message, "У вас пока нет карточек. Сначала получите карточку через /getcard.")
+        return
+    text = message.text.strip()
+    if len(text.split()) < 2:
+        bot.reply_to(message, "Пожалуйста, укажите название карточки после команды. Например: /setfavorite Сумеречная Искорка")
+        return
+    card_name = text.split(' ', 1)[1].strip()
+    found = None
+    for name in user_data['cards'].keys():
+        if name.lower() == card_name.lower():
+            found = name
+            break
+    if not found:
+        bot.reply_to(message, f"У вас нет карточки с названием «{card_name}». Проверьте написание.")
+        return
+    user_data['favorite_card'] = found
+    update_user_data(user_id, user_data)
+    bot.reply_to(message, f"✅ Любимая карточка установлена: {found}")
+
+# --- Команда профиля ---
+@bot.message_handler(commands=['profile'])
+def show_profile(message):
+    user_id = message.from_user.id
+    users, user_data = get_user_data(user_id)
+    
+    total_cards_count = sum(user_data['cards'].values())
+    experience = user_data.get('experience', 0)
+    coins = user_data.get('coins', 0)
+    favorite = user_data.get('favorite_card')
+    if favorite:
+        fav_text = favorite
+    else:
+        fav_text = "не выбрана (используйте /setfavorite)"
+    
+    level = (experience // 100) + 1
+    next_level_exp = (level) * 100
+    
+    profile_text = (
+        f"👤 Профиль игрока\n"
+        f"❤️ Любимая карточка: {fav_text}\n"
+        f"📊 Уровень: {level}\n"
+        f"✨ Опыт: {experience} / {next_level_exp}\n"
+        f"🪙 Монеты: {coins}\n"
+        f"🃏 Всего карточек: {total_cards_count}"
+    )
+    bot.reply_to(message, profile_text, parse_mode='Markdown')
+
 # --- Основные команды для всех ---
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
@@ -322,7 +378,10 @@ def send_welcome(message):
         "• Карточки бывают четырёх редкостей: Редкая (R), Суперредкая (SR), Эпическая (SSR) и Легендарная (UR)\n"
         "• Вероятность выпадения: Редкая - 40%, Суперредкая - 27,5%, Эпическая - 20%, Легендарная - 12,5%\n"
         "• Вы не можете получить карточку, которая уже есть в вашей коллекции\n"
-        "• Ваша коллекция сохраняется, её можно посмотреть командой /collection\n\n"
+        "• За каждую новую карточку вы получаете опыт и монеты!\n"
+        "• Ваша коллекция сохраняется, её можно посмотреть командой /collection\n"
+        "• Команда /profile покажет ваш профиль и любимую карточку\n"
+        "• Установить любимую карточку: /setfavorite Название\n\n"
         "Удачи в сборе! 🍀"
     )
     bot.reply_to(message, welcome_text)
@@ -332,23 +391,18 @@ def give_card(message):
     user_id = message.from_user.id
     users, user_data = get_user_data(user_id)
     
-    # Проверяем, прошло ли 6 часов
     can_get, remaining = can_get_card(user_data)
     if not can_get:
         time_str = format_time(remaining)
         bot.reply_to(message, f'Вы оглянулись, но не увидели никого из пони рядом. ⏳ Следующую карточку можно будет получить через {time_str}.')
         return
     
-    # Получаем коллекцию пользователя
     user_cards = user_data['cards']
-    
-    # Проверяем, есть ли ещё доступные карточки
     available_cards = get_available_cards(user_cards)
     if not available_cards:
         bot.reply_to(message, "🌟 Поздравляем! Вы собрали ВСЕ карточки! Ждите добавления новых.")
         return
     
-    # Выбираем карточку из доступных
     card = draw_card(user_cards)
     if not card:
         bot.reply_to(message, "😕 Что-то пошло не так. Попробуйте позже.")
@@ -356,16 +410,17 @@ def give_card(message):
     
     card_name = card['name']
     card_rarity = card['rarity']
-
-    # Добавляем карточку в коллекцию
     user_data['cards'][card_name] = user_data['cards'].get(card_name, 0) + 1
+    
+    reward = RARITY_REWARDS.get(card_rarity, {'exp': 0, 'coins': 0})
+    user_data['experience'] = user_data.get('experience', 0) + reward['exp']
+    user_data['coins'] = user_data.get('coins', 0) + reward['coins']
+    
     user_data['last_card_time'] = int(time.time())
     update_user_data(user_id, user_data)
-
-    # Отправляем карточку пользователю
     caption = f"🎉 Вы получили новую карточку: {card_name}\nРедкость: {card_rarity}"
+    caption += f"\n✨ +{reward['exp']} опыта, 🪙 +{reward['coins']} монет"
     
-    # Показываем, сколько ещё осталось собрать
     remaining_count = len(available_cards) - 1
     if remaining_count > 0:
         caption += f"\nОсталось собрать: {remaining_count} карточек"
@@ -394,17 +449,17 @@ def show_collection(message):
         lines.append(f"• {card_name} ({rarity}) — {count} шт.")
         total += count
     
-    # Добавляем информацию о прогрессе
     total_cards = len(cards)
     collected = len(cards_dict)
+    percent = int(collected/total_cards*100) if total_cards > 0 else 0
     lines.append(f"\nВсего карточек: {total}")
-    lines.append(f"Прогресс: собрано {collected} из {total} уникальных карточек ({int(collected/total*100)}%)")
+    lines.append(f"Прогресс: собрано {collected} из {total_cards} уникальных карточек ({percent}%)")
     
     bot.reply_to(message, "\n".join(lines))
 
 @bot.message_handler(func=lambda message: True)
 def handle_text(message):
-    bot.reply_to(message, "Используй команды /getcard, /collection или /addcard, /removecard, /reset_cooldown (для админа)")
+    bot.reply_to(message, "Используй команды /getcard, /collection, /profile или /setfavorite; /addcard, /removecard или /reset_cooldown (для админа)")
 
 if __name__ == '__main__':
     print("Бот запущен...")
