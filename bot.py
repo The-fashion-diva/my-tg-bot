@@ -34,7 +34,6 @@ RARITY_REWARDS = {
 CARD_COOLDOWN = 6 * 60 * 60
 DATA_FILE = 'users_data.json'
 
-# Товары в магазине
 ITEMS = {
     '1': {'name': 'Маленькое зелье', 'price': 20, 'description': 'Даёт +10 опыта при следующей карточке (автоматически)'},
     '2': {'name': 'Счастливый билет', 'price': 50, 'description': 'Позволяет получить карточку вне очереди (один раз)'},
@@ -94,7 +93,7 @@ def get_user_data(user_id):
             'experience': 0,
             'coins': 0,
             'favorite_card': None,
-            'inventory': []  # список id предметов
+            'inventory': []
         }
         save_users_data(users)
     else:
@@ -312,7 +311,7 @@ def confirm_remove_card(message):
     global cards
     cards = [card for card in cards if card['name'] != card_name]
     save_cards(cards)
-    bot.reply_to(message, f'✅ Карточка "{card_name}" успешно удалена!')
+    bot.reply_to(message, f'✅ Карточка "{card_name}" успешно удалена! Примечание: у пользователей, которые уже собрали эту карту, она останется в данных, но не будет отображаться в коллекции, пока не будет добавлена вновь.')
 
 # --- Сброс кулдауна для админа ---
 @bot.message_handler(commands=['reset_cooldown'])
@@ -325,7 +324,8 @@ def reset_cooldown(message):
     user_data['last_card_time'] = 0
     update_user_data(user_id, user_data)
     bot.reply_to(message, f"✅ Время ожидания сброшено. Теперь вы можете сразу получить карточку командой /getcard.")
-    # --- Команда для установки любимой карточки ---
+
+# --- Команда для установки любимой карточки ---
 @bot.message_handler(commands=['setfavorite'])
 def set_favorite(message):
     user_id = message.from_user.id
@@ -346,6 +346,10 @@ def set_favorite(message):
     if not found:
         bot.reply_to(message, f"У вас нет карточки с названием «{card_name}». Проверьте написание.")
         return
+    # Проверяем, существует ли карта в общем списке (иначе любимую ставить нельзя)
+    if not any(c['name'] == found for c in cards):
+        bot.reply_to(message, f"Карточка «{found})» была удалена из игры и не может быть любимой.")
+        return
     user_data['favorite_card'] = found
     update_user_data(user_id, user_data)
     bot.reply_to(message, f"✅ Любимая карточка установлена: {found}")
@@ -360,7 +364,6 @@ def view_card(message):
         bot.reply_to(message, "Пожалуйста, укажите название карточки. Например: /viewcard Сумеречная Искорка")
         return
     card_name = text.split(' ', 1)[1].strip()
-    # Ищем в коллекции пользователя
     found_name = None
     for name in user_data['cards'].keys():
         if name.lower() == card_name.lower():
@@ -369,14 +372,10 @@ def view_card(message):
     if not found_name:
         bot.reply_to(message, f"У вас нет карточки с названием «{card_name}».")
         return
-    # Ищем данные карточки в общем списке
-    card_data = None
-    for card in cards:
-        if card['name'] == found_name:
-            card_data = card
-            break
+    # Ищем в общем списке
+    card_data = next((c for c in cards if c['name'] == found_name), None)
     if not card_data:
-        bot.reply_to(message, f"Ошибка: карточка {found_name} не найдена в базе.")
+        bot.reply_to(message, f"Карточка «{found_name})» больше не доступна в игре (удалена).")
         return
     count = user_data['cards'][found_name]
     caption = f"🃏 {found_name}\nРедкость: {card_data['rarity']}\nУ вас: {count} шт."
@@ -411,13 +410,11 @@ def buy_item(message):
     if user_data['coins'] < price:
         bot.reply_to(message, f"Недостаточно монет. У вас {user_data['coins']} 🪙, нужно {price}.")
         return
-    # Списываем монеты, добавляем предмет
     user_data['coins'] -= price
     user_data['inventory'].append(item_id)
     update_user_data(user_id, user_data)
     bot.reply_to(message, f"✅ Вы купили {item['name']}! Остаток монет: {user_data['coins']} 🪙")
-
-# --- Команда инвентаря ---
+    # --- Команда инвентаря ---
 @bot.message_handler(commands=['inventory'])
 def show_inventory(message):
     user_id = message.from_user.id
@@ -440,10 +437,18 @@ def show_profile(message):
     user_id = message.from_user.id
     users, user_data = get_user_data(user_id)
     
-    total_cards_count = sum(user_data['cards'].values())
+    # Считаем только актуальные карты (которые есть в общем списке)
+    total_cards_count = 0
+    for name, count in user_data['cards'].items():
+        if any(c['name'] == name for c in cards):
+            total_cards_count += count
+    
     experience = user_data.get('experience', 0)
     coins = user_data.get('coins', 0)
     favorite = user_data.get('favorite_card')
+    # Проверяем, что любимая карта ещё существует
+    if favorite and not any(c['name'] == favorite for c in cards):
+        favorite = None
     inv_count = len(user_data.get('inventory', []))
     
     level = (experience // 100) + 1
@@ -459,14 +464,11 @@ def show_profile(message):
         f"🎒 Предметов: {inv_count}"
     )
     
-    # Если есть любимая карточка и у неё есть фото, отправляем фото с подписью
     if favorite:
-        # Ищем карточку в общем списке
-        for card in cards:
-            if card['name'] == favorite and "image_id" in card:
-                bot.send_photo(message.chat.id, card["image_id"], caption=profile_text)
-                return
-    # Иначе просто текст
+        card_data = next((c for c in cards if c['name'] == favorite), None)
+        if card_data and "image_id" in card_data:
+            bot.send_photo(message.chat.id, card_data["image_id"], caption=profile_text)
+            return
     bot.reply_to(message, profile_text)
 
 # --- Основные команды для всех ---
@@ -521,6 +523,7 @@ def give_card(message):
     
     user_data['last_card_time'] = int(time.time())
     update_user_data(user_id, user_data)
+
     caption = f"🎉 Вы получили новую карточку: {card_name}\nРедкость: {card_rarity}"
     caption += f"\n✨ +{reward['exp']} опыта, 🪙 +{reward['coins']} монет"
     
@@ -547,13 +550,21 @@ def show_collection(message):
 
     lines = ["📋 Ваша коллекция:"]
     total = 0
+    # Фильтруем: показываем только те карты, которые есть в общем списке
     for card_name, count in sorted(cards_dict.items()):
-        rarity = next((c["rarity"] for c in cards if c["name"] == card_name), "unknown")
+        card_info = next((c for c in cards if c["name"] == card_name), None)
+        if not card_info:
+            continue  # пропускаем удалённые карты
+        rarity = card_info["rarity"]
         lines.append(f"• {card_name} ({rarity}) — {count} шт.")
         total += count
-    
+
+    if len(lines) == 1:  # не добавилось ни одной карты
+        bot.reply_to(message, "В вашей коллекции пока нет актуальных карт (возможно, они были удалены).")
+        return
+
     total_cards = len(cards)
-    collected = len(cards_dict)
+    collected = sum(1 for name in cards_dict if any(c["name"] == name for c in cards))
     percent = int(collected/total_cards*100) if total_cards > 0 else 0
     lines.append(f"\nВсего карточек: {total}")
     lines.append(f"Прогресс: собрано {collected} из {total_cards} уникальных карточек ({percent}%)")
