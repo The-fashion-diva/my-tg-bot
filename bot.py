@@ -34,6 +34,13 @@ RARITY_REWARDS = {
 CARD_COOLDOWN = 6 * 60 * 60
 DATA_FILE = 'users_data.json'
 
+# Товары в магазине
+ITEMS = {
+    '1': {'name': 'Маленькое зелье', 'price': 20, 'description': 'Даёт +10 опыта при следующей карточке (автоматически)'},
+    '2': {'name': 'Счастливый билет', 'price': 50, 'description': 'Позволяет получить карточку вне очереди (один раз)'},
+    '3': {'name': 'Золотая подкова', 'price': 100, 'description': 'Увеличивает шанс выпадения редкой карточки на 10% (пассивно)'},
+}
+
 def load_cards():
     if not os.path.exists(CARDS_FILE):
         default_cards = [
@@ -86,7 +93,8 @@ def get_user_data(user_id):
             'last_card_time': 0,
             'experience': 0,
             'coins': 0,
-            'favorite_card': None
+            'favorite_card': None,
+            'inventory': []  # список id предметов
         }
         save_users_data(users)
     else:
@@ -103,6 +111,9 @@ def get_user_data(user_id):
         if 'last_card_time' not in users[user_id_str]:
             users[user_id_str]['last_card_time'] = 0
             updated = True
+        if 'inventory' not in users[user_id_str]:
+            users[user_id_str]['inventory'] = []
+            updated = True
         if updated:
             save_users_data(users)
     return users, users[user_id_str]
@@ -111,7 +122,6 @@ def update_user_data(user_id, updated_data):
     users = load_users_data()
     users[str(user_id)] = updated_data
     save_users_data(users)
-
 def can_get_card(user_data):
     current_time = int(time.time())
     last_time = user_data.get('last_card_time', 0)
@@ -136,6 +146,7 @@ def get_available_cards(user_cards):
         if card['name'] not in user_cards:
             available.append(card)
     return available
+
 def draw_card(user_cards):
     available_cards = get_available_cards(user_cards)
     if not available_cards:
@@ -213,7 +224,6 @@ def process_add_card_rarity(message):
     admin_add_state[user_id]['rarity'] = rarity
     bot.reply_to(message, 'Отправьте изображение для карточки (или отправьте /skip, чтобы пропустить)')
     bot.register_next_step_handler(message, process_add_card_image)
-
 def process_add_card_image(message):
     user_id = message.from_user.id
     if message.text == '/skip':
@@ -227,6 +237,7 @@ def process_add_card_image(message):
     else:
         bot.reply_to(message, "❌ Пожалуйста, отправьте изображение или /skip:")
         bot.register_next_step_handler(message, process_add_card_image)
+
 def save_new_card(user_id):
     data = admin_add_state.pop(user_id, None)
     if not data:
@@ -314,8 +325,7 @@ def reset_cooldown(message):
     user_data['last_card_time'] = 0
     update_user_data(user_id, user_data)
     bot.reply_to(message, f"✅ Время ожидания сброшено. Теперь вы можете сразу получить карточку командой /getcard.")
-
-# --- Команда для установки любимой карточки ---
+    # --- Команда для установки любимой карточки ---
 @bot.message_handler(commands=['setfavorite'])
 def set_favorite(message):
     user_id = message.from_user.id
@@ -340,7 +350,91 @@ def set_favorite(message):
     update_user_data(user_id, user_data)
     bot.reply_to(message, f"✅ Любимая карточка установлена: {found}")
 
-# --- Команда профиля ---
+# --- Команда для просмотра конкретной карточки ---
+@bot.message_handler(commands=['viewcard'])
+def view_card(message):
+    user_id = message.from_user.id
+    users, user_data = get_user_data(user_id)
+    text = message.text.strip()
+    if len(text.split()) < 2:
+        bot.reply_to(message, "Пожалуйста, укажите название карточки. Например: /viewcard Сумеречная Искорка")
+        return
+    card_name = text.split(' ', 1)[1].strip()
+    # Ищем в коллекции пользователя
+    found_name = None
+    for name in user_data['cards'].keys():
+        if name.lower() == card_name.lower():
+            found_name = name
+            break
+    if not found_name:
+        bot.reply_to(message, f"У вас нет карточки с названием «{card_name}».")
+        return
+    # Ищем данные карточки в общем списке
+    card_data = None
+    for card in cards:
+        if card['name'] == found_name:
+            card_data = card
+            break
+    if not card_data:
+        bot.reply_to(message, f"Ошибка: карточка {found_name} не найдена в базе.")
+        return
+    count = user_data['cards'][found_name]
+    caption = f"🃏 {found_name}\nРедкость: {card_data['rarity']}\nУ вас: {count} шт."
+    if "image_id" in card_data:
+        bot.send_photo(message.chat.id, card_data["image_id"], caption=caption)
+    else:
+        bot.send_message(message.chat.id, caption)
+
+# --- Команда магазина ---
+@bot.message_handler(commands=['market'])
+def show_market(message):
+    text = "🏪 Магазин предметов:\n\n"
+    for item_id, item in ITEMS.items():
+        text += f"🆔 {item_id}. {item['name']} – {item['price']} 🪙\n   {item['description']}\n\n"
+    text += "Купить: /buy [ID предмета]"
+    bot.reply_to(message, text)
+
+@bot.message_handler(commands=['buy'])
+def buy_item(message):
+    user_id = message.from_user.id
+    users, user_data = get_user_data(user_id)
+    text = message.text.strip()
+    if len(text.split()) < 2:
+        bot.reply_to(message, "Укажите ID предмета. Например: /buy 1")
+        return
+    item_id = text.split()[1].strip()
+    if item_id not in ITEMS:
+        bot.reply_to(message, "Предмет с таким ID не найден.")
+        return
+    item = ITEMS[item_id]
+    price = item['price']
+    if user_data['coins'] < price:
+        bot.reply_to(message, f"Недостаточно монет. У вас {user_data['coins']} 🪙, нужно {price}.")
+        return
+    # Списываем монеты, добавляем предмет
+    user_data['coins'] -= price
+    user_data['inventory'].append(item_id)
+    update_user_data(user_id, user_data)
+    bot.reply_to(message, f"✅ Вы купили {item['name']}! Остаток монет: {user_data['coins']} 🪙")
+
+# --- Команда инвентаря ---
+@bot.message_handler(commands=['inventory'])
+def show_inventory(message):
+    user_id = message.from_user.id
+    users, user_data = get_user_data(user_id)
+    inv = user_data.get('inventory', [])
+    if not inv:
+        bot.reply_to(message, "Ваш инвентарь пуст. Зайдите в /market.")
+        return
+    text = "🎒 Ваш инвентарь:\n"
+    for item_id in inv:
+        if item_id in ITEMS:
+            text += f"• {ITEMS[item_id]['name']}\n"
+        else:
+            text += f"• Неизвестный предмет (ID {item_id})\n"
+    bot.reply_to(message, text)
+
+# --- Команда профиля (с фото любимой карточки) ---
 @bot.message_handler(commands=['profile'])
 def show_profile(message):
     user_id = message.from_user.id
@@ -350,23 +444,30 @@ def show_profile(message):
     experience = user_data.get('experience', 0)
     coins = user_data.get('coins', 0)
     favorite = user_data.get('favorite_card')
-    if favorite:
-        fav_text = favorite
-    else:
-        fav_text = "не выбрана (используйте /setfavorite)"
+    inv_count = len(user_data.get('inventory', []))
     
     level = (experience // 100) + 1
     next_level_exp = (level) * 100
     
     profile_text = (
         f"👤 Профиль игрока\n"
-        f"❤️ Любимая карточка: {fav_text}\n"
+        f"❤️ Любимая карточка: {favorite if favorite else 'не выбрана'}\n"
         f"📊 Уровень: {level}\n"
         f"✨ Опыт: {experience} / {next_level_exp}\n"
         f"🪙 Монеты: {coins}\n"
-        f"🃏 Всего карточек: {total_cards_count}"
+        f"🃏 Всего карточек: {total_cards_count}\n"
+        f"🎒 Предметов: {inv_count}"
     )
-    bot.reply_to(message, profile_text, parse_mode='Markdown')
+    
+    # Если есть любимая карточка и у неё есть фото, отправляем фото с подписью
+    if favorite:
+        # Ищем карточку в общем списке
+        for card in cards:
+            if card['name'] == favorite and "image_id" in card:
+                bot.send_photo(message.chat.id, card["image_id"], caption=profile_text)
+                return
+    # Иначе просто текст
+    bot.reply_to(message, profile_text)
 
 # --- Основные команды для всех ---
 @bot.message_handler(commands=['start'])
@@ -379,9 +480,11 @@ def send_welcome(message):
         "• Вероятность выпадения: Редкая - 40%, Суперредкая - 27,5%, Эпическая - 20%, Легендарная - 12,5%\n"
         "• Вы не можете получить карточку, которая уже есть в вашей коллекции\n"
         "• За каждую новую карточку вы получаете опыт и монеты!\n"
+        "• Монеты можно тратить в магазине (/market)\n"
         "• Ваша коллекция сохраняется, её можно посмотреть командой /collection\n"
         "• Команда /profile покажет ваш профиль и любимую карточку\n"
-        "• Установить любимую карточку: /setfavorite Название\n\n"
+        "• Установить любимую карточку: /setfavorite Название\n"
+        "• Посмотреть карточку: /viewcard Название\n\n"
         "Удачи в сборе! 🍀"
     )
     bot.reply_to(message, welcome_text)
@@ -459,7 +562,7 @@ def show_collection(message):
 
 @bot.message_handler(func=lambda message: True)
 def handle_text(message):
-    bot.reply_to(message, "Используй команды /getcard, /collection, /profile или /setfavorite; /addcard, /removecard или /reset_cooldown (для админа)")
+    bot.reply_to(message, "Используй команды /getcard, /collection, /profile, /setfavorite, /viewcard, /market, /inventory, /buy; для админа: /addcard, /removecard, /reset_cooldown")
 
 if __name__ == '__main__':
     print("Бот запущен...")
